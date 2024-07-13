@@ -1,27 +1,23 @@
 ﻿using Microsoft.Win32.SafeHandles;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Neighborly;
 
-internal static class MemoryMappedFileServices
+internal static partial class MemoryMappedFileServices
 {
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern SafeFileHandle CreateFile(
-    string lpFileName,
-        [MarshalAs(UnmanagedType.U4)] FileAccess dwDesiredAccess,
-        [MarshalAs(UnmanagedType.U4)] FileShare dwShareMode,
+    [LibraryImport("kernel32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    private static partial SafeFileHandle CreateFileW(
+        string lpFileName,
+        FileAccess dwDesiredAccess,
+        FileShare dwShareMode,
         IntPtr lpSecurityAttributes,
-        [MarshalAs(UnmanagedType.U4)] FileMode dwCreationDisposition,
-        [MarshalAs(UnmanagedType.U4)] FileAttributes dwFlagsAndAttributes,
+        FileMode dwCreationDisposition,
+        FileAttributes dwFlagsAndAttributes,
         IntPtr hTemplateFile);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool DeviceIoControl(
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool DeviceIoControl(
         SafeFileHandle hDevice,
         uint dwIoControlCode,
         IntPtr lpInBuffer,
@@ -31,17 +27,15 @@ internal static class MemoryMappedFileServices
         out uint lpBytesReturned,
         IntPtr lpOverlapped);
 
-    const uint FSCTL_SET_SPARSE = 0x900C4;
+    private const uint FSCTL_SET_SPARSE = 0x900C4;
 
     // Win32 P/Invoke declarations
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
-    private static extern uint GetCompressedFileSize(
-        string lpFileName,
-        out uint lpFileSizeHigh);
+    [LibraryImport("kernel32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    private static partial uint GetCompressedFileSizeW(string lpFileName, out uint lpFileSizeHigh);
 
     // Linux and FreeBSD P/Invoke declarations
-    [DllImport("libc", EntryPoint = "stat", SetLastError = true)]
-    private static extern int stat(string path, out StatBuffer statbuf);
+    [LibraryImport("libc", EntryPoint = "stat", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    private static partial int stat(string path, out StatBuffer statbuf);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct StatBuffer
@@ -73,19 +67,19 @@ internal static class MemoryMappedFileServices
     internal static void WinFileAlloc(string path)
     {
         // Only run this function on Windows
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) == false)
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             return;
         }
 
         // Create a sparse file
-        SafeFileHandle fileHandle = CreateFile(
+        using SafeFileHandle fileHandle = CreateFileW(
             path,
             FileAccess.ReadWrite,
             FileShare.None,
             IntPtr.Zero,
             FileMode.Create,
-            FileAttributes.Normal | (FileAttributes)0x200, // FILE_ATTRIBUTE_SPARSE_FILE
+            FileAttributes.Normal | FileAttributes.SparseFile,
             IntPtr.Zero);
 
         if (fileHandle.IsInvalid)
@@ -93,7 +87,6 @@ internal static class MemoryMappedFileServices
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         }
 
-        uint bytesReturned;
         bool result = DeviceIoControl(
             fileHandle,
             FSCTL_SET_SPARSE,
@@ -101,45 +94,40 @@ internal static class MemoryMappedFileServices
             0,
             IntPtr.Zero,
             0,
-            out bytesReturned,
+            out _,
             IntPtr.Zero);
 
         if (!result)
         {
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         }
-
-        // Close the file handle
-        fileHandle.Close();
     }
 
     /// <summary>
     /// Returns the actual disk space used by the Index and Data files.
     /// </summary>
     /// <returns>
-    /// [0] = bytes allocated for Index file
-    /// [1] = total (sparce) capacity of Index file
-    /// [2] = bytes allocated for Data file
-    /// [3] = total (sparce) capacity of Data file
+    /// An object containing the following information:
+    /// <see cref="MemoryMappedFileInfo.IndexAllocatedBytes"/>  = bytes allocated for Index file
+    /// <see cref="MemoryMappedFileInfo.IndexSparseCapacity"/> = total (sparse) capacity of Index file
+    /// <see cref="MemoryMappedFileInfo.DataAllocatedBytes"/> = bytes allocated for Data file
+    /// <see cref="MemoryMappedFileInfo.DataSparseCapacity"/> = total (sparse) capacity of Data file
     /// </returns>
-    /// <seealso cref="ForceFlush"/>
-    internal static long[] GetFileInfo(MemoryMappedFileHolder indexFile, MemoryMappedFileHolder dataFile)
+    /// <seealso cref="MemoryMappedList.Flush"/>
+    internal static MemoryMappedFileInfo GetFileInfo(MemoryMappedFileHolder indexFile, MemoryMappedFileHolder dataFile)
     {
-        // Return the disk info for _indexFile and _dataFile as a long[] array
-        long[] fileInfo = new long[4];
-
-        fileInfo[0] = GetActualDiskSpaceUsed(indexFile.Filename);
-        fileInfo[1] = indexFile.Capacity;
-        fileInfo[2] = GetActualDiskSpaceUsed(dataFile.Filename);
-        fileInfo[3] = dataFile.Capacity;
-        return fileInfo;
+        return new(
+            GetActualDiskSpaceUsed(indexFile.FileName),
+            indexFile.Capacity,
+            GetActualDiskSpaceUsed(dataFile.FileName),
+            dataFile.Capacity);
     }
+
     internal static long GetActualDiskSpaceUsed(string fileName)
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            uint fileSizeHigh;
-            uint fileSizeLow = GetCompressedFileSize(fileName, out fileSizeHigh);
+            uint fileSizeLow = GetCompressedFileSizeW(fileName, out uint fileSizeHigh);
 
             if (fileSizeLow == 0xFFFFFFFF && Marshal.GetLastWin32Error() != 0)
             {
@@ -150,8 +138,7 @@ internal static class MemoryMappedFileServices
         }
         else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.FreeBSD))
         {
-            StatBuffer statbuf;
-            if (stat(fileName, out statbuf) != 0)
+            if (stat(fileName, out StatBuffer statbuf) != 0)
             {
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             }
@@ -163,4 +150,6 @@ internal static class MemoryMappedFileServices
             throw new PlatformNotSupportedException("The operating system is not supported.");
         }
     }
+
+    internal record struct MemoryMappedFileInfo(long IndexAllocatedBytes, long IndexSparseCapacity, long DataAllocatedBytes, long DataSparseCapacity);
 }

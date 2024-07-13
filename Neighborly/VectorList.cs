@@ -1,4 +1,5 @@
 using System.Collections;
+using static Neighborly.MemoryMappedFileServices;
 
 namespace Neighborly;
 
@@ -293,7 +294,7 @@ public class VectorList : IList<Vector>, IDisposable
         return _memoryMappedList.DefragBatch();
     }
 
-    internal long[] GetFileInfo()
+    internal MemoryMappedFileInfo GetFileInfo()
     {
         return _memoryMappedList.GetFileInfo();
     }
@@ -301,6 +302,5 @@ public class VectorList : IList<Vector>, IDisposable
     internal void ForceFlush()
     {
         _memoryMappedList.Flush();
-        return;
     }
 }

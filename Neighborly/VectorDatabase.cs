@@ -29,8 +29,8 @@ public partial class VectorDatabase : IDisposable
     public VectorList Vectors => _vectors;
     private Search.SearchService _searchService;
     private ReaderWriterLockSlim _rwLock = new();
-    private Thread indexService;
-    private CancellationTokenSource _indexServiceCancellationTokenSource;
+    private Thread? indexService;
+    private CancellationTokenSource? _indexServiceCancellationTokenSource;
 
 
     /// <summary>

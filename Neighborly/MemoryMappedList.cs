@@ -1,8 +1,6 @@
-using Microsoft.Win32.SafeHandles;
 using System.Buffers;
 using System.Collections;
-using System.IO.MemoryMappedFiles;
-using System.Runtime.InteropServices;
+using static Neighborly.MemoryMappedFileServices;
 
 namespace Neighborly;
 
@@ -16,7 +14,7 @@ public class MemoryMappedList : IDisposable, IEnumerable<Vector>
     private static readonly byte[] s_tombStoneBytes;
     private readonly MemoryMappedFileHolder _indexFile;
     private readonly MemoryMappedFileHolder _dataFile;
-    private ReaderWriterLockSlim _rwLock = new ReaderWriterLockSlim();
+    private readonly ReaderWriterLockSlim _rwLock = new ReaderWriterLockSlim();
     private long _count;
     /// <summary>
     /// Indicates if the index stream is at the end of the stream.
@@ -772,13 +770,14 @@ public class MemoryMappedList : IDisposable, IEnumerable<Vector>
     /// Returns the actual disk space used by the Index and Data files.
     /// </summary>
     /// <returns>
-    /// [0] = bytes allocated for Index file
-    /// [1] = total (sparce) capacity of Index file
-    /// [2] = bytes allocated for Data file
-    /// [3] = total (sparce) capacity of Data file
+    /// An object containing the following information:
+    /// <see cref="MemoryMappedFileInfo.IndexAllocatedBytes"/>  = bytes allocated for Index file
+    /// <see cref="MemoryMappedFileInfo.IndexSparseCapacity"/> = total (sparse) capacity of Index file
+    /// <see cref="MemoryMappedFileInfo.DataAllocatedBytes"/> = bytes allocated for Data file
+    /// <see cref="MemoryMappedFileInfo.DataSparseCapacity"/> = total (sparse) capacity of Data file
     /// </returns>
     /// <seealso cref="Flush"/>
-    internal long[] GetFileInfo()
+    internal MemoryMappedFileInfo GetFileInfo()
     {
         return MemoryMappedFileServices.GetFileInfo(_indexFile, _dataFile);
     }
